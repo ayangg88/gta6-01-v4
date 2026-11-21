@@ -1,5 +1,5 @@
 // Solstice Heat ships its offline city, source modules and four reproducible browser scenes.
-import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -9,19 +9,33 @@ const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
 const screenshotLimit = 256 * 1024;
 const screenshots = ['1-cover.png', '2-street.png', '3-mission.png', '4-drive.png'];
+const expectedScreenshotDimensions = { width: 1280, height: 720 };
 
-function validateFile(path: string, maxBytes?: number) {
-  const stats = statSync(join(here, path), { throwIfNoEntry: false });
-  if (!stats?.isFile()) throw new Error(`${path} must exist as a file`);
+function validateFile(path: string, maxBytes?: number, dimensions?: { width: number; height: number }) {
+  const file = join(here, path);
+  const stats = statSync(file, { throwIfNoEntry: false });
+  if (!stats?.isFile()) throw new Error(`missing file: ${path} must exist as a file`);
   if (maxBytes !== undefined && stats.size > maxBytes) {
-    throw new Error(`${path} is ${stats.size} bytes and exceeds the ${maxBytes}-byte limit`);
+    throw new Error(`too large: ${path} is ${stats.size} bytes and exceeds the ${maxBytes}-byte limit`);
+  }
+  if (dimensions !== undefined) {
+    const header = readFileSync(file);
+    const isPngHeader = header.length >= 24
+      && header.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      && header.toString('ascii', 12, 16) === 'IHDR';
+    const width = isPngHeader ? header.readUInt32BE(16) : undefined;
+    const height = isPngHeader ? header.readUInt32BE(20) : undefined;
+    if (width !== dimensions.width || height !== dimensions.height) {
+      const actual = width === undefined || height === undefined ? 'unreadable PNG dimensions' : `${width}x${height}`;
+      throw new Error(`wrong dimensions: ${path} has ${actual}; expected ${dimensions.width}x${dimensions.height}`);
+    }
   }
 }
 
 try {
   validateFile('game/index.html');
   for (const screenshot of screenshots) {
-    validateFile(`screenshots/${screenshot}`, screenshotLimit);
+    validateFile(`screenshots/${screenshot}`, screenshotLimit, expectedScreenshotDimensions);
   }
 } catch (error) {
   console.error('Cannot package Solstice Heat:', error instanceof Error ? error.message : String(error));
