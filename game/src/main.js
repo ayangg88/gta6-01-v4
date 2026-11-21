@@ -306,13 +306,16 @@
     updateParticles(g, dt);
     for (const skid of g.skids) skid.life -= dt;
     g.skids = g.skids.filter((s) => s.life > 0);
+    followCamera(g, dt);
+    g.audio.update(g, dt);
+  }
+  function followCamera(g, dt) {
     const v = g.player.vehicle;
     const ahead = v ? v.speed * 0.32 : 0;
     const tx = g.player.x + Math.cos(g.player.angle) * ahead;
     const ty = g.player.y + Math.sin(g.player.angle) * ahead;
     g.camera.x += (tx - g.camera.x) * Math.min(1, dt * 4);
     g.camera.y += (ty - g.camera.y) * Math.min(1, dt * 4);
-    g.audio.update(g, dt);
   }
   const shot = new URLSearchParams(location.search).get("shot");
   if (shot) stageScene(g, shot);
@@ -324,8 +327,22 @@
     save: () => g.save(),
   };
   let previous = 0;
+  let wasPausedBeforeHide = false;
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      wasPausedBeforeHide = g.paused;
+      g.paused = true;
+      if (g.audio.ctx) g.audio.ctx.suspend();
+    } else {
+      previous = null;
+      g.paused = wasPausedBeforeHide;
+      if (g.audio.ctx && !wasPausedBeforeHide) g.audio.ctx.resume();
+    }
+  });
   function frame(time) {
-    const dt = Math.min(0.034, Math.max(0, (time - previous) / 1000));
+    const dt = previous === null
+      ? 0
+      : Math.min(0.034, Math.max(0, (time - previous) / 1000));
     previous = time;
     if (!g.shot) update(dt);
     render(ctx, g);
