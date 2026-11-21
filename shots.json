@@ -1,5 +1,6 @@
 [
-  { "name": "1-start.jpg", "query": "?shot=start&seed=1" },
-  { "name": "2-play.jpg", "query": "?shot=play&seed=1" },
-  { "name": "3-end.jpg", "query": "?shot=end&seed=1" }
+  { "name": "1-cover.png", "query": "?shot=chase&seed=73219" },
+  { "name": "2-street.png", "query": "?shot=street&seed=73219" },
+  { "name": "3-mission.png", "query": "?shot=mission&seed=73219" },
+  { "name": "4-drive.png", "query": "?shot=marina&seed=73219" }
 ]

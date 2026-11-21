@@ -1,134 +1,193 @@
-// Boot and the one loop: input is read every frame, the world advances in fixed 1/60 s steps
-// (several in a slow frame, none in a fast one), and the renderer paints what is there. The game
-// moves between four screens: title, play, paused and game over.
-//
-// ?seed=N fixes the falling pattern. ?shot=start|play|end (with &seed=N) stages that scene
-// instead of running the loop, paints it twice and sets window.__shotReady for a screenshot.
-import { BEST_KEY, LIVES, STEP } from './config.js';
-import { createRandom } from './random.js';
-import { createWorld, EVENT_HIT, EVENT_OVER } from './world.js';
-import { ACTION_CONFIRM, ACTION_PAUSE, createInput } from './input.js';
-import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
-import { stageShot } from './shots.js';
-
-/** The longest frame the loop catches up on; a longer stall (a hidden tab) is dropped, not replayed. */
-const MAX_FRAME = 0.25;
-
-const params = new URLSearchParams(window.location.search);
-const shot = params.get('shot');
-const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
-const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
-
-const canvas = document.getElementById('game');
-const status = document.getElementById('status');
-const world = createWorld(createRandom(seed));
-const renderer = createRenderer(canvas);
-
-function readBest() {
-  try {
-    return Number.parseInt(window.localStorage.getItem(BEST_KEY) ?? '0', 10) || 0;
-  } catch {
-    return 0;
+import { Input } from './input.js';
+import { AudioSystem } from './audio.js';
+import { createTraffic, updateTraffic } from './traffic.js';
+import { createPedestrians, updatePedestrians } from './pedestrians.js';
+import { updatePlayer, enterExit } from './vehicles.js';
+import { updatePolice } from './police.js';
+import { updateWeapons } from './weapons.js';
+import { createCollectibles, updateEconomy, interactEconomy, buyItem } from './economy.js';
+import { beginMission, updateMissions, missionList } from './missions.js';
+import { updateDialogue } from './dialogue.js';
+import { updateParticles } from './particles.js';
+import { saveGame, loadGame, hasSave } from './save.js';
+import { stageScene } from './staging.js';
+import { render } from './render.js';
+import { distance, clamp } from './random.js';
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const g = {
+  input: new Input(canvas),
+  audio: new AudioSystem(),
+  player: { x: 850, y: 1100, angle: 0, health: 100, armor: 40, ammo: [120, 0, 0], owned: [true, false, false], weapon: 0, vehicle: null },
+  camera: { x: 1030, y: 970 },
+  vehicles: [],
+  pedestrians: [],
+  officers: [],
+  enemies: [],
+  packages: [],
+  pickups: [],
+  bullets: [],
+  skids: [],
+  particles: [],
+  heat: 0,
+  hideTime: 0,
+  arrest: 0,
+  policeSpawn: 0,
+  fireTimer: 0,
+  storeCooldown: 0,
+  jumpTime: 0,
+  shake: 0,
+  elapsed: 0,
+  clock: 12 * 60 + 5,
+  cash: 1800,
+  respect: 0,
+  completed: 0,
+  mission: null,
+  sideJob: null,
+  dialogue: null,
+  completeScreen: null,
+  gameOver: null,
+  phone: false,
+  shop: null,
+  paused: false,
+  started: false,
+  slot: 1,
+  rain: false,
+  message: 'Meet Inez at the gold marker • E to talk',
+  uiButtons: [],
+  save() { saveGame(this); },
+  crime(amount) {
+    this.heat = clamp(this.heat + amount, 0, 5);
+    this.hideTime = 0;
+  },
+  hurt(amount) {
+    const blocked = Math.min(this.player.armor, amount * .7);
+    this.player.armor -= blocked;
+    this.player.health -= amount - blocked;
+    this.shake = 3;
+    if (this.player.health <= 0) this.fail('WASTED');
+  },
+  fail(reason) {
+    if (this.gameOver) return;
+    this.gameOver = reason;
+    this.cash = Math.max(0, this.cash - 300);
+    this.mission = null;
+    this.dialogue = null;
+  }
+};
+createTraffic(g);
+createPedestrians(g);
+createCollectibles(g);
+function start(continuing = false) {
+  g.audio.start();
+  if (continuing) loadGame(g, g.slot);
+  g.started = true;
+  g.paused = false;
+  g.camera.x = g.player.x;
+  g.camera.y = g.player.y;
+}
+function respawn() {
+  g.gameOver = null;
+  g.heat = 0;
+  g.arrest = 0;
+  g.roadblock = false;
+  g.officers = [];
+  g.enemies = [];
+  g.policeHeli = null;
+  g.vehicles = g.vehicles.filter(v => !v.police);
+  Object.assign(g.player, { x: 420, y: 2110, health: 100, armor: 0, vehicle: null });
+  g.camera.x = g.player.x;
+  g.camera.y = g.player.y;
+  g.message = 'Back at the garage. There is always another road.';
+}
+function action(name) {
+  g.audio.start();
+  if (name.startsWith('slot-')) g.slot = Number(name.split('-')[1]);
+  if (name === 'new') start();
+  if (name === 'continue') start(true);
+  if (name === 'resume') g.paused = false;
+  if (name === 'save') g.save();
+  if (name === 'load') { loadGame(g, g.slot); g.paused = false; g.heat = 0; }
+  if (name === 'title') { g.started = false; g.paused = false; }
+  if (name === 'close') { g.shop = null; g.phone = false; }
+  if (name === 'complete') g.completeScreen = null;
+  if (name === 'respawn') respawn();
+  if (name.startsWith('mission-')) beginMission(g, Number(name.split('-')[1]));
+  if (name.startsWith('buy-')) buyItem(g, Number(name.split('-')[1]));
+  if (name === 'race') {
+    g.phone = false;
+    g.mission = { index: 7, step: 0, hold: 0, timer: 0, spawned: false };
+    g.message = 'Tavi: meet me at the Crown Mile starting line.';
   }
 }
-
-function saveBest(value) {
-  try {
-    window.localStorage.setItem(BEST_KEY, String(value));
-  } catch {
-    // Storage can be off (private windows): the best score then lasts this visit only.
+function handleInput() {
+  const i = g.input;
+  if (i.mouse.clicked) {
+    const b = [...g.uiButtons].reverse().find(b => i.mouse.x > b.x && i.mouse.x < b.x + b.w && i.mouse.y > b.y && i.mouse.y < b.y + b.h);
+    if (b) { action(b.action); return; }
+  }
+  if (i.tap('KeyM')) g.audio.muted = !g.audio.muted;
+  if (!g.started) {
+    for (let n = 1; n <= 3; n++) if (i.tap('Digit' + n)) g.slot = n;
+    if (i.tap('Enter', 'Space')) start(hasSave(g.slot));
+    return;
+  }
+  if (i.tap('Escape')) {
+    if (g.shop || g.phone) { g.shop = null; g.phone = false; }
+    else g.paused = !g.paused;
+  }
+  if (i.tap('F5')) { g.save(); }
+  if (i.tap('F9')) { loadGame(g, g.slot); }
+  if (g.paused || g.gameOver || g.completeScreen) return;
+  if (i.tap('KeyP') && !g.dialogue) g.phone = !g.phone;
+  if (i.tap('KeyR')) { g.audio.station = (g.audio.station + 1) % 3; g.audio.musicTimer = 0; }
+  if (g.dialogue || g.phone || g.shop) return;
+  if (i.tap('KeyE')) {
+    if (interactEconomy(g)) return;
+    if (!g.mission && distance(g.player, { x: 910, y: 1100 }) < 115 && g.completed < 10) { beginMission(g); return; }
+    // During a vault interaction, E belongs to the lock rather than a nearby car.
+    const t = g.mission && missionList[g.mission.index].steps[g.mission.step];
+    if (t?.mode === 'interact' && distance(g.player, t) < 105) return;
+    enterExit(g);
   }
 }
-
-function runShot(name) {
-  const scene = stageShot(name, world);
-  let painted = 0;
-  function paint() {
-    renderer.draw(world.state, scene.screen, scene.best);
-    painted += 1;
-    if (painted < 2) requestAnimationFrame(paint);
-    else window.__shotReady = true;
-  }
-  requestAnimationFrame(paint);
+function update(dt) {
+  handleInput();
+  if (!g.started || g.paused || g.gameOver || g.completeScreen || g.phone || g.shop) return;
+  if (g.dialogue) { updateDialogue(g, dt); return; }
+  g.elapsed += dt;
+  g.clock = (g.clock + dt * 2) % 1440;
+  g.rain = Math.floor(g.elapsed / 120) % 4 === 3;
+  g.shake = Math.max(0, g.shake - dt * 12);
+  updatePlayer(g, dt);
+  updateTraffic(g, dt);
+  updatePedestrians(g, dt);
+  updateWeapons(g, dt);
+  updatePolice(g, dt);
+  updateMissions(g, dt);
+  updateEconomy(g, dt);
+  updateParticles(g, dt);
+  for (const skid of g.skids) skid.life -= dt;
+  g.skids = g.skids.filter(s => s.life > 0);
+  const v = g.player.vehicle;
+  const ahead = v ? v.speed * .32 : 0;
+  const tx = g.player.x + Math.cos(g.player.angle) * ahead;
+  const ty = g.player.y + Math.sin(g.player.angle) * ahead;
+  g.camera.x += (tx - g.camera.x) * Math.min(1, dt * 4);
+  g.camera.y += (ty - g.camera.y) * Math.min(1, dt * 4);
+  g.audio.update(g, dt);
 }
-
-function runGame() {
-  const input = createInput(canvas);
-  let screen = SCREEN_TITLE;
-  let best = readBest();
-  let accumulator = 0;
-  let last = performance.now();
-
-  // Screen readers (and anyone watching the page's text) hear the screen changes and each hit.
-  function announce(message) {
-    status.textContent = message;
-  }
-
-  function startGame() {
-    world.reset();
-    accumulator = 0;
-    screen = SCREEN_PLAY;
-    announce(`Playing. ${LIVES} lives.`);
-  }
-
-  function endGame() {
-    screen = SCREEN_OVER;
-    if (world.state.score > best) {
-      best = world.state.score;
-      saveBest(best);
-    }
-    announce(`Game over. Score ${world.state.score}. Best ${best}.`);
-  }
-
-  function handleActions() {
-    const actions = input.takeActions();
-    if (actions & ACTION_CONFIRM && (screen === SCREEN_TITLE || screen === SCREEN_OVER)) startGame();
-    else if (actions & ACTION_PAUSE && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    } else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && screen === SCREEN_PAUSED) {
-      screen = SCREEN_PLAY;
-      announce('Playing.');
-    }
-  }
-
-  function step() {
-    if (screen === SCREEN_TITLE) {
-      world.step(STEP, 0, true);
-      return;
-    }
-    const events = world.step(STEP, input.direction(), false);
-    if (events & EVENT_OVER) endGame();
-    else if (events & EVENT_HIT) announce(world.state.lives === 1 ? 'Hit. 1 life left.' : `Hit. ${world.state.lives} lives left.`);
-  }
-
-  function frame(now) {
-    requestAnimationFrame(frame);
-    accumulator += Math.min((now - last) / 1000, MAX_FRAME);
-    last = now;
-    handleActions();
-    if (screen === SCREEN_TITLE || screen === SCREEN_PLAY) {
-      while (accumulator >= STEP && (screen === SCREEN_TITLE || screen === SCREEN_PLAY)) {
-        step();
-        accumulator -= STEP;
-      }
-    } else {
-      accumulator = 0;
-    }
-    renderer.draw(world.state, screen, best);
-  }
-
-  // Leaving the tab pauses a running game rather than letting blocks fall unseen.
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden && screen === SCREEN_PLAY) {
-      screen = SCREEN_PAUSED;
-      announce('Paused.');
-    }
-  });
-
-  announce('Block Dodger. Press Space or click to start.');
+const shot = new URLSearchParams(location.search).get('shot');
+if (shot) stageScene(g, shot);
+window.game = g;
+window.solstice = { beginMission: index => beginMission(g, index), enterExit: () => enterExit(g), stage: name => stageScene(g, name), save: () => g.save() };
+let previous = 0;
+function frame(time) {
+  const dt = Math.min(.034, Math.max(0, (time - previous) / 1000));
+  previous = time;
+  if (!g.shot) update(dt);
+  render(ctx, g);
+  g.input.endFrame();
   requestAnimationFrame(frame);
 }
-
-if (shot) runShot(shot);
-else runGame();
+requestAnimationFrame(frame);
