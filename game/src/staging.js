@@ -33,7 +33,27 @@
       }
     };
     if (shot === "chase") {
-      g.camera = { x: 2580, y: 1500 };
+      g.camera = { x: 2680, y: 1510 };
+      // Shot-only panoramic camera: include both landings and give the deck
+      // more of the vertical frame. The renderer restores this world transform
+      // before drawing the HUD, so its text and panels remain at native size.
+      const context = document.querySelector("canvas").getContext("2d");
+      const translate = context.translate.bind(context);
+      context.translate = (x, y) => {
+        if (x === 640 - g.camera.x && y === 360 - g.camera.y) {
+          translate(640, 360);
+          context.scale(0.65, 1.4);
+          translate(-g.camera.x, -g.camera.y);
+        } else {
+          translate(x, y);
+          // Keep the chase vehicles and helicopter at their natural aspect
+          // ratio within the panoramic scene projection.
+          if (g.vehicles.some(v => v.x === x && v.y === y) ||
+              (g.policeHeli?.x === x && g.policeHeli?.y === y)) {
+            context.scale(1 / 0.65, 1 / 1.4);
+          }
+        }
+      };
       g.player.vehicle = add("sports", 2580, 1543, -0.055, "#f0713f");
       g.player.vehicle.speed = 370;
       add("police", 2390, 1545, -0.03, "#e9ebdf", true);
@@ -43,10 +63,10 @@
       add("taxi", 2920, 1494, Math.PI, "#eac252");
       add("sedan", 2180, 1494, Math.PI, "#a9809e");
       add("pickup", 3150, 1543, 0, "#6b969d");
-      add("boat", 2400, 1760, -0.3, "#fbf0d5");
-      add("boat", 2830, 1750, -2.8, "#f3a072");
-      add("jetski", 2710, 1260, 0.25, "#f4cd63");
-      g.policeHeli = { x: 2650, y: 1320, angle: 0.23 };
+      add("boat", 2400, 1680, -0.3, "#fbf0d5");
+      add("boat", 2830, 1685, -2.8, "#f3a072");
+      add("jetski", 2820, 1385, 0.25, "#f4cd63");
+      g.policeHeli = { x: 2650, y: 1385, angle: 0.23 };
       g.heat = 4;
       g.mission = { index: 0, step: 1, hold: 0 };
       g.stagedTitle = "SOLSTICE CAUSEWAY";
@@ -133,17 +153,17 @@
       g.stagedTitle = "THE GILDED TIDE";
       g.stagedSubtitle = "VAULT QUARTER / STORY JOB 02";
     } else {
-      g.camera = { x: 2180, y: 2640 };
-      g.player.vehicle = add("boat", 2300, 2615, -0.27, "#ed8051");
+      g.camera = { x: 1810, y: 2680 };
+      g.player.vehicle = add("boat", 2175, 2640, -0.27, "#ed8051");
       g.player.vehicle.speed = 312;
-      const patrol = add("boat", 2100, 2705, -0.3, "#e9efe1", true);
+      const patrol = add("boat", 2075, 2690, -0.3, "#e9efe1", true);
       patrol.speed = 220;
       add("sports", 1780, 2480, -Math.PI / 2, "#ef7548").speed = 280;
       add("taxi", 1810, 2690, Math.PI / 2, "#f1cb5a");
       add("van", 1728, 2560, Math.PI / 2, "#a3b9ba");
       add("boat", 2110, 2930, -Math.PI / 2, "#f4d88b");
-      add("jetski", 2510, 2790, -0.6, "#f4dc81");
-      add("boat", 2710, 2440, Math.PI / 2, "#c8e5e4");
+      add("jetski", 2260, 2770, -0.6, "#f4dc81");
+      add("boat", 2225, 2540, Math.PI / 2, "#c8e5e4");
       people(1880, 2485, 8, false);
       g.heat = 3;
       g.mission = { index: 2, step: 1, hold: 0 };
