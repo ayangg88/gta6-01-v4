@@ -1,11 +1,32 @@
 // Solstice Heat ships its offline city, source modules and four reproducible browser scenes.
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+const screenshotLimit = 256 * 1024;
+const screenshots = ['1-cover.png', '2-street.png', '3-mission.png', '4-drive.png'];
+
+function validateFile(path: string, maxBytes?: number) {
+  const stats = statSync(join(here, path), { throwIfNoEntry: false });
+  if (!stats?.isFile()) throw new Error(`${path} must exist as a file`);
+  if (maxBytes !== undefined && stats.size > maxBytes) {
+    throw new Error(`${path} is ${stats.size} bytes and exceeds the ${maxBytes}-byte limit`);
+  }
+}
+
+try {
+  validateFile('game/index.html');
+  for (const screenshot of screenshots) {
+    validateFile(`screenshots/${screenshot}`, screenshotLimit);
+  }
+} catch (error) {
+  console.error('Cannot package Solstice Heat:', error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 
 mkdirSync(out, { recursive: true });
 cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
